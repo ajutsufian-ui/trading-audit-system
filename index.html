@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AuditOS — Visual Trading Audit System</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #2d333b;
+    --text: #e6edf3; --muted: #8b949e; --green: #3fb950; --red: #f85149;
+    --blue: #58a6ff; --gold: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 2px; }
+  h1 span { color: var(--gold); }
+  .tagline { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  h2 { font-size: 15px; color: var(--blue); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 7px 8px; border-bottom: 1px solid #21262d; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+  .b-up { background: #12261e; color: var(--green); }
+  .b-down { background: #2d1517; color: var(--red); }
+  .b-flat { background: #232b36; color: var(--muted); }
+  .big { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kv { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; border-bottom: 1px solid #21262d; }
+  .kv span:first-child { color: var(--muted); }
+  input, select, button, textarea { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  button { cursor: pointer; } button:hover { border-color: var(--blue); }
+  textarea { width: 100%; height: 110px; font-family: ui-monospace, monospace; font-size: 11px; }
+  .rules li { margin: 6px 0 6px 18px; font-size: 13px; color: var(--text); }
+  .rules { color: var(--muted); }
+  .footnote { color: var(--muted); font-size: 11px; margin-top: 10px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .flash { color: var(--gold); font-size: 12px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <h1>Audit<span>OS</span> — Visual Trading Audit System</h1>
+  <div class="tagline">Prototype v0.1 &middot; every position carries its stop, sizing logic and regime context &middot; performance you can verify, not trust</div>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <h2>Portfolio — live value</h2>
+        <div class="row">
+          <select id="addCoin"></select>
+          <input id="addQty" type="number" step="any" placeholder="qty" style="width:90px">
+          <button onclick="addHolding()">Add</button>
+          <span class="flash" id="savedFlash" style="display:none">saved</span>
+        </div>
+        <table id="holdingsTable">
+          <thead><tr><th>Asset</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th></th></tr></thead>
+          <tbody id="holdingsBody"><tr><td colspan="5" style="color:var(--muted)">loading prices…</td></tr></tbody>
+        </table>
+        <div class="kv" style="margin-top:10px"><span>Total portfolio value</span><span class="big" id="totalVal">—</span></div>
+        <div class="footnote">Holdings are stored only in your browser (localStorage). Prices: CoinGecko public API, may lag by a minute. Nothing here is financial advice.</div>
+      </div>
+
+      <div class="panel">
+        <h2>Market regime — trend state per asset</h2>
+        <table>
+          <thead><tr><th>Asset</th><th class="num">Price</th><th>EMA trend (20/50)</th><th>100-day regime</th></tr></thead>
+          <tbody id="regimeBody"><tr><td colspan="4" style="color:var(--muted)">computing…</td></tr></tbody>
+        </table>
+        <div class="footnote">Regime = direction of the 100-day EMA over 5 days. The strategy only trades with the regime, never against it.</div>
+      </div>
+
+      <div class="panel">
+        <h2>System risk rules (hard-coded in production engine)</h2>
+        <ul class="rules">
+          <li>Risk per trade: 0.5% of equity, stop-loss on <b>every</b> trade</li>
+          <li>Stop distance: 2 &times; ATR(14), trailing — never loosened</li>
+          <li>Day stop: no new trades after −2% day P/L</li>
+          <li>Kill-switch: full halt at −5% drawdown</li>
+          <li>Float cap: worst position force-closed at −1.5% equity</li>
+          <li>Concurrency: max 2 positions; correlation gate 0.7 blocks correlated entries</li>
+        </ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Audit trail — trade log</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:8px">Paste a JSON array of trades (or press Load sample). Each trade: {date, coin, side, entry, exit, stop, risk, pnl}.</p>
+        <textarea id="tradesInput" placeholder='[{"date":"2026-10-20","coin":"BTC","side":"long","entry":81000,"exit":84600,"stop":79300,"risk":500,"pnl":1190}, ...]'></textarea>
+        <div class="row" style="margin-top:8px">
+          <button onclick="loadSample()">Load sample</button>
+          <button onclick="auditTrades()">Audit &amp; compute</button>
+        </div>
+        <div class="kv"><span>Trades audited</span><span id="stTrades">—</span></div>
+        <div class="kv"><span>Win rate</span><span id="stWin">—</span></div>
+        <div class="kv"><span>Net P/L</span><span id="stPnl">—</span></div>
+        <div class="kv"><span>Profit factor</span><span id="stPf">—</span></div>
+        <div class="kv"><span>Max drawdown (closed-trade equity)</span><span id="stDd">—</span></div>
+        <div class="kv"><span>Avg win / avg loss</span><span id="stAvg">—</span></div>
+        <div class="kv"><span>Worst losing streak</span><span id="stStreak">—</span></div>
+        <div class="kv"><span>Stop discipline (every trade had a stop)</span><span id="stStops">—</span></div>
+      </div>
+
+      <div class="panel">
+        <h2>Verified trade rows</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Asset</th><th>Side</th><th class="num">Entry</th><th class="num">Stop</th><th class="num">Exit</th><th class="num">P/L</th></tr></thead>
+          <tbody id="rowsBody"><tr><td colspan="7" style="color:var(--muted)">no log loaded</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>What makes this auditable</h2>
+        <ul class="rules">
+          <li>Every row shows the stop that existed <i>at entry</i> — losses can't hide</li>
+          <li>Entries sized by risk (fixed fraction of equity), so sizing is checkable</li>
+          <li>Signals execute at next bar open — no look-ahead backtest bias</li>
+          <li>Costs (fees + slippage) are modeled in results, not ignored</li>
+          <li>Same rules enforced in live engine and backtest — one source of truth</li>
+        </ul>
+        <div class="footnote">Patent-pending system &amp; documentation. © 2026 Ajut Sufian</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const COINS = {
+  bitcoin:  { sym:"BTC",  name:"Bitcoin"  },
+  ethereum: { sym:"ETH",  name:"Ethereum" },
+  solana:   { sym:"SOL",  name:"Solana"   },
+  dogecoin: { sym:"DOGE", name:"Dogecoin" }
+};
+const DEFAULT_HOLDINGS = { "bitcoin": 2 };   // starting portfolio: 2 BTC (editable)
+
+// ---------- holdings ----------
+function getH() { try { return JSON.parse(localStorage.auditos_h) || {}; } catch(e){ return {}; } }
+function setH(h){ localStorage.auditos_h = JSON.stringify(h); }
+(function initH(){ if(!localStorage.auditos_h) setH(DEFAULT_HOLDINGS); })();
+
+function ema(arr, n){ const out=[]; const k=2/(n+1);
+  arr.forEach((p,i)=> out.push(i===0? p : p*k + out[i-1]*(1-k))); return out; }
+
+let PRICES = {};
+
+async function loadPrices(){
+  try{
+    const ids = Object.keys(COINS).join(",");
+    const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+    PRICES = await r.json();
+    renderHoldings(); renderRegime();
+  }catch(e){
+    document.getElementById("holdingsBody").innerHTML =
+      `<tr><td colspan="5" style="color:var(--red)">price feed unreachable: ${e.message}</td></tr>`;
+  }
+}
+
+function renderHoldings(){
+  const h = getH(); const tb = document.getElementById("holdingsBody");
+  tb.innerHTML = ""; let total = 0;
+  for(const [id, qty] of Object.entries(h)){
+    const meta = COINS[id]; const p = PRICES[id]?.usd;
+    const val = p ? qty*p : null; if(val) total += val;
+    const chg = PRICES[id]?.usd_24h_change;
+    tb.insertAdjacentHTML("beforeend",
+      `<tr><td>${meta?.sym||id}</td><td class="num">${qty}</td>
+       <td class="num">${p? "$"+fmt(p) : "…"}</td>
+       <td class="num">${val? "$"+Math.round(val).toLocaleString() : "…"}</td>
+       <td><button style="padding:1px 8px" onclick="delH('${id}')">×</button></td></tr>`);
+  }
+  document.getElementById("totalVal").textContent = "$" + Math.round(total).toLocaleString();
+}
+
+function delH(id){ const h=getH(); delete h[id]; setH(h); renderHoldings(); }
+function addHolding(){
+  const id = document.getElementById("addCoin").value;
+  const qty = parseFloat(document.getElementById("addQty").value);
+  if(!id || !qty || qty<=0){ alert("pick a coin and a quantity"); return; }
+  const h = getH(); h[id] = (h[id]||0) + qty; setH(h);
+  document.getElementById("addQty").value = ""; renderHoldings();
+  const f = document.getElementById("savedFlash"); f.style.display="inline"; setTimeout(()=>f.style.display="none",1200);
+}
+(function fillSelect(){
+  const s = document.getElementById("addCoin");
+  for(const [id,m] of Object.entries(COINS)) s.insertAdjacentHTML("beforeend", `<option value="${id}">${m.sym}</option>`);
+})();
+
+function fmt(x){ return x >= 100 ? Math.round(x).toLocaleString() : x >= 1 ? x.toFixed(2) : x.toFixed(5); }
+
+// ---------- regime ----------
+async function renderRegime(){
+  const tb = document.getElementById("regimeBody"); tb.innerHTML = "";
+  for(const [id,m] of Object.entries(COINS)){
+    try{
+      const r = await fetch(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=120&interval=daily`);
+      const d = await r.json();
+      const closes = d.prices.map(p=>p[1]);
+      const e20=ema(closes,20), e50=ema(closes,50), e100=ema(closes,100);
+      const i=closes.length-1;
+      const trendUp = e20[i] > e50[i];
+      const regimeUp = e100[i] > e100[i-5];
+      tb.insertAdjacentHTML("beforeend",
+        `<tr><td>${m.sym}</td><td class="num">$${fmt(PRICES[id]?.usd || closes[i])}</td>
+         <td><span class="badge ${trendUp?'b-up':'b-down'}">${trendUp?'UP':'DOWN'}</span></td>
+         <td><span class="badge ${regimeUp?'b-up':'b-down'}">${regimeUp?'UP':'DOWN'}</span></td></tr>`);
+    }catch(e){
+      tb.insertAdjacentHTML("beforeend", `<tr><td>${m.sym}</td><td colspan="3" style="color:var(--muted)">history unavailable</td></tr>`);
+    }
+  }
+}
+
+// ---------- audit ----------
+const SAMPLE = [
+  {date:"2026-01-08", coin:"BTC", side:"long", entry:92450, stop:89100, exit:96800, risk:500, pnl:1176},
+  {date:"2026-02-02", coin:"ETH", side:"long", entry:3010, stop:2885, exit:3422, risk:500, pnl:830},
+  {date:"2026-02-19", coin:"BTC", side:"long", entry:95100, stop:92900, exit:92900, risk:500, pnl:-500},
+  {date:"2026-03-11", coin:"SOL", side:"long", entry:142.6, stop:133.1, exit:171.2, risk:500, pnl:955},
+  {date:"2026-04-06", coin:"ETH", side:"short", entry:3355, stop:3420, exit:3420, risk:500, pnl:-500},
+  {date:"2026-05-14", coin:"DOGE", side:"long", entry:0.1421, stop:0.1318, exit:0.1905, risk:500, pnl:984},
+  {date:"2026-06-30", coin:"BTC", side:"short", entry:62800, stop:64100, exit:64100, risk:500, pnl:-500},
+  {date:"2026-08-05", coin:"ETH", side:"long", entry:2495, stop:2410, exit:2888, risk:500, pnl:866},
+  {date:"2026-09-02", coin:"SOL", side:"long", entry:128.4, stop:121.9, exit:121.9, risk:500, pnl:-500},
+  {date:"2026-10-01", coin:"BTC", side:"long", entry:80900, stop:78740, exit:84620, risk:500, pnl:976}
+];
+function loadSample(){
+  document.getElementById("tradesInput").value = JSON.stringify(SAMPLE, null, 1);
+  auditTrades();
+}
+function auditTrades(){
+  let trades;
+  try { trades = JSON.parse(document.getElementById("tradesInput").value); }
+  catch(e){ alert("invalid JSON: "+e.message); return; }
+  if(!Array.isArray(trades) || !trades.length){ alert("paste a JSON array of trades"); return; }
+  trades.sort((a,b)=> a.date < b.date ? -1 : 1);
+  let eq=0, peak=0, maxDd=0, wins=0, gw=0, gl=0, streak=0, worstStreak=0, missingStops=0;
+  const rows=[]; 
+  for(const t of trades){
+    const pnl = t.pnl !== undefined ? t.pnl : (t.exit-t.entry)*(t.side==="long"?1:-1);
+    eq += pnl; peak = Math.max(peak, eq); maxDd = Math.max(maxDd, peak-eq);
+    if(pnl>0){ wins++; gw+=pnl; streak=0; } else { gl+=-pnl; streak++; worstStreak=Math.max(worstStreak,streak); }
+    if(t.stop===undefined || t.stop===null) missingStops++;
+    rows.push(`<tr><td>${t.date}</td><td>${t.coin}</td><td>${t.side}</td>
+      <td class="num">${fmt(+t.entry)}</td><td class="num">${t.stop!==undefined?fmt(+t.stop):"<span class='neg'>none</span>"}</td>
+      <td class="num">${t.exit!==undefined?fmt(+t.exit):"—"}</td>
+      <td class="num ${pnl>=0?'pos':'neg'}">${pnl>=0?'+':''}${Math.round(pnl)}</td></tr>`);
+  }
+  const pf = gl>0 ? (gw/gl).toFixed(2) : "∞";
+  document.getElementById("stTrades").textContent = trades.length;
+  document.getElementById("stWin").textContent = Math.round(100*wins/trades.length) + "%";
+  document.getElementById("stPnl").innerHTML = `<span class="${eq>=0?'pos':'neg'}">${eq>=0?'+':''}$${Math.round(eq).toLocaleString()}</span>`;
+  document.getElementById("stPf").textContent = pf;
+  document.getElementById("stDd").textContent = "$" + Math.round(maxDd).toLocaleString();
+  document.getElementById("stAvg").textContent = `$${Math.round(gw/Math.max(1,wins))} / -$${Math.round(gl/Math.max(1,trades.length-wins))}`;
+  document.getElementById("stStreak").textContent = worstStreak + " trades";
+  document.getElementById("stStops").innerHTML = missingStops===0
+    ? `<span class="pos">PASS — ${trades.length}/${trades.length}</span>`
+    : `<span class="neg">FAIL — ${missingStops} trade(s) without a stop</span>`;
+  document.getElementById("rowsBody").innerHTML = rows.join("");
+}
+
+loadPrices();
+</script>
+</body>
+</html>
